@@ -1,4 +1,5 @@
 import json
+from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,8 @@ from ..schemas.orders import OrderCreateIn, OrderOut
 import structlog
 
 log = structlog.get_logger()
+
+OrderStatus = Literal["CREATED", "PAID", "CANCELLED"]
 
 class OrdersService:
     def __init__(self, session: AsyncSession):

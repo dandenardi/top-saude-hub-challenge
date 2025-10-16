@@ -1,3 +1,5 @@
+import { ApiError, parseJsonSafe } from "./api-error";
+
 export type ApiEnvelope<T> = {
   cod_retorno: 0 | 1;
   mensagem?: string | null;
@@ -39,6 +41,12 @@ const isServer = typeof window === "undefined";
 
 const BASE = isServer ? process.env.API_INTERNAL_URL || "http://api:8000" : "";
 
+function emitApiError(msg: string) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("api-error", { detail: msg }));
+  }
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const clean = path.startsWith("/api") ? path : `/api${path}`;
   const url = `${BASE}${clean}`;
@@ -48,21 +56,46 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
 
-  const json = await res.json(); // se der HTML aqui, o rewrite não está ativo
-  if (!res.ok || json.cod_retorno === 1)
-    throw new Error(json.mensagem || `HTTP ${res.status}`);
-  return json.data as T;
+  const json = await parseJsonSafe(res);
+  if (json && typeof json === "object" && "cod_retorno" in json) {
+    if (!res.ok || json.cod_retorno === 1) {
+      const msg = (json as any).mensagem || `Erro ${res.status}`;
+      emitApiError(msg);
+      throw new ApiError(res.status, msg);
+    }
+    return (json as any).data as T;
+  }
+
+  if (!res.ok) {
+    let msg = `Erro ${res.status}`;
+    try {
+      const text = await res.clone().text();
+      if (text && text !== "" && text.length < 500) msg = text;
+    } catch {}
+    emitApiError(msg);
+    throw new ApiError(res.status, msg);
+  }
+
+  return json as T;
 }
 
 export const api = {
   products: {
     list: (params?: URLSearchParams) =>
       apiFetch<Product[]>(`/api/products?${params?.toString() ?? ""}`),
+    get: (id: number) => apiFetch(`/api/products/${id}`),
     create: (body: Omit<Product, "id" | "created_at">) =>
       apiFetch<Product>("/api/products", {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    update: (id: number, body: any) =>
+      apiFetch(`/api/products/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    remove: (id: number) =>
+      apiFetch(`/api/products/${id}`, { method: "DELETE" }),
   },
   customers: {
     list: (params?: URLSearchParams) =>

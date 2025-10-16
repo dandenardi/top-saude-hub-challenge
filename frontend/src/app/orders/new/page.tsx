@@ -2,8 +2,10 @@
 import * as React from "react";
 import { api } from "@/lib/api";
 import { Typeahead } from "@/components/Typeahead";
+import { useToast } from "@/components/ToastProvider";
 
 export default function NewOrderPage() {
+  const { show } = useToast();
   const [customerId, setCustomerId] = React.useState<number | null>(1);
   const [items, setItems] = React.useState<
     { id: number; name: string; price: number; qty: number }[]
@@ -24,19 +26,22 @@ export default function NewOrderPage() {
   const total = items.reduce((acc, it) => acc + it.price * it.qty, 0);
 
   const submit = async () => {
-    if (!customerId || items.length === 0)
-      return alert("Selecione cliente e itens");
-    const payload = {
-      customer_id: customerId,
-      items: items.map((i) => ({ product_id: i.id, quantity: i.qty })),
-    };
-    const res = await api.orders.create(payload);
-    alert(
-      `Pedido criado #${res.id} total ${(res.total_amount / 100).toLocaleString(
-        "pt-BR",
-        { style: "currency", currency: "BRL" }
-      )}`
-    );
+    try {
+      if (!customerId || items.length === 0)
+        return alert("Selecione cliente e itens");
+      const payload = {
+        customer_id: customerId,
+        items: items.map((i) => ({ product_id: i.id, quantity: i.qty })),
+      };
+      const res = await api.orders.create(payload);
+      alert(
+        `Pedido criado #${res.id} total ${(
+          res.total_amount / 100
+        ).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}`
+      );
+    } catch (error: any) {
+      show(error?.message || "Falha inesperada");
+    }
   };
 
   return (

@@ -1,6 +1,6 @@
 import asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
-from .db import SessionLocal
+from sqlalchemy.dialects.postgresql import insert
+from .db import AsyncSessionLocal
 from .models import ProductORM, CustomerORM
 
 PRODUCTS = [
@@ -40,11 +40,25 @@ CUSTOMERS = [
 ]
 
 async def run():
-    async with SessionLocal() as session:  # type: AsyncSession
+    async with AsyncSessionLocal() as session:  
+        
         for n, sku, price, qty, active in PRODUCTS:
-            session.add(ProductORM(name=n, sku=sku, price=price, stock_qty=qty, is_active=active))
+            stmt = (
+                insert(ProductORM)
+                .values(name=n, sku=sku, price=price, stock_qty=qty, is_active=active)
+                .on_conflict_do_nothing(index_elements=["sku"])
+            )
+            await session.execute(stmt)
+
+        
         for n, email, doc in CUSTOMERS:
-            session.add(CustomerORM(name=n, email=email, document=doc))
+            stmt = (
+                insert(CustomerORM)
+                .values(name=n, email=email, document=doc)
+                .on_conflict_do_nothing(index_elements=["document"])
+            )
+            await session.execute(stmt)
+
         await session.commit()
 
 if __name__ == "__main__":

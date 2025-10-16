@@ -5,7 +5,9 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from src.infrastructure.db import Base  
+from httpx import AsyncClient, ASGITransport
+from src.main import app
+from src.infrastructure.db import Base, get_session  
 from src.infrastructure import models   
 
 TEST_DATABASE_URL = os.getenv(
@@ -96,3 +98,17 @@ async def mk_customer(session: AsyncSession):
         await session.flush()
         return c
     return _f
+
+@pytest_asyncio.fixture()
+async def api_client(session):  
+    async def _override_get_session():
+        
+        yield session
+
+    app.dependency_overrides[get_session] = _override_get_session
+
+    transport = ASGITransport(app=app)  
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.clear()

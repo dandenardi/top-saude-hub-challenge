@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI
-from .infrastructure.logging import setup_logging
+from .infrastructure.log_setup import setup_logging
 from fastapi.middleware.cors import CORSMiddleware
 from .api.middlewares import RequestLogMiddleware
 from .api.router import router
