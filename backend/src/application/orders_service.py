@@ -1,62 +1,105 @@
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-from ..infrastructure.models import ProductORM, OrderORM, OrderItemORM, IdempotencyKeyORM
-from ..domain.enums import OrderStatus
-from ..schemas.orders import OrderCreateIn, OrderOut
-from ..schemas.envelope import ApiEnvelope
 import json
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.dialects.postgresql import insert
+from ..infrastructure.models import ProductORM, OrderORM, OrderItemORM, IdempotencyKeyORM
+from ..schemas.envelope import ApiEnvelope
+from ..schemas.orders import OrderCreateIn, OrderOut
 
 class OrdersService:
-    @staticmethod
-    async def create_order(session: AsyncSession, payload: OrderCreateIn, idempotency_key: str | None):
-        # Idempotência
-        if idempotency_key:
-            existing = (await session.execute(select(IdempotencyKeyORM).where(IdempotencyKeyORM.key == idempotency_key))).scalar_one_or_none()
-            if existing and existing.response_json:
-                return json.loads(existing.response_json)
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
-        # Transação atômica
-        async with session.begin():
-            product_ids = [item.product_id for item in payload.items]
-            products = (await session.execute(
-                select(ProductORM).where(ProductORM.id.in_(product_ids)).with_for_update()
-            )).scalars().all()
+    async def create(self, payload: OrderCreateIn, idem_key: str | None):
+        if not payload.items:
+            return ApiEnvelope.err("Pedido sem itens")
 
-            prod_by_id = {p.id: p for p in products}
-            total = 0
-            for item in payload.items:
-                p = prod_by_id.get(item.product_id)
+        if idem_key:
+            found = (
+                await self.session.execute(
+                    select(IdempotencyKeyORM).where(IdempotencyKeyORM.key == idem_key)
+                )
+            ).scalar_one_or_none()
+            if found and found.response_json:
+                data = json.loads(found.response_json)
+                out = OrderOut.model_validate(data)
+                return ApiEnvelope.ok(out)
+
+        async def _inside_tx():
+            ids = [i.product_id for i in payload.items]
+            prods = (
+                await self.session.execute(
+                    select(ProductORM)
+                    .where(ProductORM.id.in_(ids))
+                    .with_for_update()
+                )
+            ).scalars().all()
+            pmap = {p.id: p for p in prods}
+
+            
+            for it in payload.items:
+                p = pmap.get(it.product_id)
                 if not p or not p.is_active:
-                    raise ValueError("Produto inválido ou inativo")
-                if p.stock_qty < item.quantity:
-                    raise ValueError("Estoque insuficiente")
-                total += p.price * item.quantity
+                    return ApiEnvelope.err("Produto inválido ou inativo")
+                if p.stock_qty < it.quantity:
+                    return ApiEnvelope.err(f"Estoque insuficiente para produto {p.name}")
 
-            order = OrderORM(customer_id=payload.customer_id, total_amount=total, status=OrderStatus.CREATED)
-            session.add(order)
-            await session.flush()  # garante order.id
+            order = OrderORM(customer_id=payload.customer_id, status="CREATED", total_amount=0)
+            self.session.add(order)
+            await self.session.flush()  
 
-            for item in payload.items:
-                p = prod_by_id[item.product_id]
-                p.stock_qty -= item.quantity
-                session.add(OrderItemORM(
-                    order_id=order.id,
-                    product_id=p.id,
-                    unit_price=p.price,
-                    quantity=item.quantity,
-                    line_total=p.price * item.quantity,
-                ))
+            total = 0
+            for it in payload.items:
+                p = pmap[it.product_id]
+                line_total = p.price * it.quantity
+                total += line_total
+                self.session.add(
+                    OrderItemORM(
+                        order_id=order.id,
+                        product_id=p.id,
+                        unit_price=p.price,
+                        quantity=it.quantity,
+                        line_total=line_total,
+                    )
+                )
+                p.stock_qty -= it.quantity
 
-        order_db = (await session.execute(
-            select(OrderORM).options(selectinload(OrderORM.items)).where(OrderORM.id == order.id)
-        )).scalar_one()
+            order.total_amount = total
+            await self.session.flush()
 
-        result = ApiEnvelope.ok(OrderOut.from_orm(order_db).model_dump()).model_dump()
+            
+            rec = await self.session.execute(
+                select(OrderORM)
+                .options(selectinload(OrderORM.items))
+                .where(OrderORM.id == order.id)
+            )
+            order_loaded = rec.scalar_one()
 
-        if idempotency_key:
-            record = IdempotencyKeyORM(key=idempotency_key, order_id=order_db.id, response_json=json.dumps(result))
-            session.add(record)
-            await session.commit()
+            
+            out = OrderOut.from_orm(order_loaded)  
+            out_json = json.dumps(out.model_dump(), ensure_ascii=False)
 
-        return result
+            
+            if idem_key:
+                stmt = insert(IdempotencyKeyORM).values(
+                    key=idem_key,
+                    order_id=order_loaded.id,
+                    response_json=out_json,
+                ).on_conflict_do_nothing(
+                    index_elements=[IdempotencyKeyORM.key]
+                )
+                await self.session.execute(stmt)
+            return ApiEnvelope.ok(out)
+    
+        try:
+
+            if self.session.in_transaction():
+                async with self.session.begin_nested():
+                    return await _inside_tx()
+            else:
+                async with self.session.begin():
+                    return await _inside_tx()
+        except Exception as e:
+            
+            return ApiEnvelope.err(str(e))

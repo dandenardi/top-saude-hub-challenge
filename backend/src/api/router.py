@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+
 from ..infrastructure.db import get_session
 from ..schemas.envelope import ApiEnvelope
 from ..schemas.products import ProductIn, ProductOut
@@ -7,6 +10,7 @@ from ..schemas.customers import CustomerIn, CustomerOut
 from ..schemas.orders import OrderCreateIn
 from ..application.orders_service import OrdersService
 from ..infrastructure.repos import ProductRepo, CustomerRepo
+from ..infrastructure.models import CustomerORM
 
 router = APIRouter()
 
@@ -28,13 +32,37 @@ async def create_customer(body: CustomerIn, session: AsyncSession = Depends(get_
     return ApiEnvelope.ok(out)
 
 @router.get("/customers", response_model=ApiEnvelope[list[CustomerOut]])
-async def list_customers(page: int = 1, page_size: int = 20, session: AsyncSession = Depends(get_session)):
-    # simplificado: sem filtro/ordem para demo
-    from sqlalchemy import select
-    rows = (await session.execute(select(__import__("..infrastructure.models", fromlist=["CustomerORM"]).CustomerORM).offset((page-1)*page_size).limit(page_size))).scalars().all()
-    return ApiEnvelope.ok([CustomerOut(id=r.id, name=r.name, email=r.email, document=r.document) for r in rows])
+async def list_customers(
+    q: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort: str = "created_at:desc",
+    session: AsyncSession = Depends(get_session),
+):
+    sort_col, sort_dir = (sort.split(":", 1) + ["asc"])[:2]
+    order_expr = text(f"{sort_col} {sort_dir.upper()}")
+    stmt = select(CustomerORM).order_by(order_expr)
+    if q:
+        stmt = stmt.where(CustomerORM.name.ilike(f"%{q}%"))
+    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = (await session.execute(stmt)).scalars().all()
+    data = [CustomerOut(id=r.id, name=r.name, email=r.email, document=r.document) for r in rows]
+    return ApiEnvelope.ok(data)
 
 # --- Orders ---
 @router.post("/orders", response_model=dict)
-async def create_order(body: OrderCreateIn, session: AsyncSession = Depends(get_session), idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")):
-    return await OrdersService.create_order(session, body, idempotency_key)
+async def create_order(
+    body: OrderCreateIn,
+    session: AsyncSession = Depends(get_session),
+    
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", convert_underscores=False),
+):
+    svc = OrdersService(session)
+    env = await svc.create(body, idempotency_key)
+
+    return JSONResponse(
+        status_code=getattr(env, "status_code", status.HTTP_200_OK),
+        content=env.model_dump(),
+    )
+    
+  

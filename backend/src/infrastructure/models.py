@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import List
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import ForeignKey, String, Integer, Boolean, DateTime, func, UniqueConstraint
 from .db import Base
@@ -27,7 +30,7 @@ class OrderORM(Base):
     total_amount: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), index=True)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    items: Mapped[list["OrderItemORM"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    items: Mapped[List["OrderItemORM"]] = relationship(back_populates="order", cascade="all, delete-orphan", lazy="selectin")
 
 class OrderItemORM(Base):
     __tablename__ = "order_items"
