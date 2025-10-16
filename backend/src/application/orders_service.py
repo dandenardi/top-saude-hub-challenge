@@ -6,6 +6,9 @@ from sqlalchemy.dialects.postgresql import insert
 from ..infrastructure.models import ProductORM, OrderORM, OrderItemORM, IdempotencyKeyORM
 from ..schemas.envelope import ApiEnvelope
 from ..schemas.orders import OrderCreateIn, OrderOut
+import structlog
+
+log = structlog.get_logger()
 
 class OrdersService:
     def __init__(self, session: AsyncSession):
@@ -16,6 +19,7 @@ class OrdersService:
             return ApiEnvelope.err("Pedido sem itens")
 
         if idem_key:
+            
             found = (
                 await self.session.execute(
                     select(IdempotencyKeyORM).where(IdempotencyKeyORM.key == idem_key)
@@ -24,6 +28,7 @@ class OrdersService:
             if found and found.response_json:
                 data = json.loads(found.response_json)
                 out = OrderOut.model_validate(data)
+                log.info("idempotent_replay", key=idem_key)
                 return ApiEnvelope.ok(out)
 
         async def _inside_tx():
@@ -41,8 +46,10 @@ class OrdersService:
             for it in payload.items:
                 p = pmap.get(it.product_id)
                 if not p or not p.is_active:
+                    log.warning("order_create_validation_error", reason="inactive_or_missing", product_id=it.product_id)
                     return ApiEnvelope.err("Produto inválido ou inativo")
                 if p.stock_qty < it.quantity:
+                    log.warning("order_create_validation_error", reason="lack_of_stock_for_product", product_id=it.product_id)
                     return ApiEnvelope.err(f"Estoque insuficiente para produto {p.name}")
 
             order = OrderORM(customer_id=payload.customer_id, status="CREATED", total_amount=0)
@@ -75,6 +82,7 @@ class OrdersService:
                 .where(OrderORM.id == order.id)
             )
             order_loaded = rec.scalar_one()
+            
 
             
             out = OrderOut.from_orm(order_loaded)  
@@ -90,6 +98,7 @@ class OrdersService:
                     index_elements=[IdempotencyKeyORM.key]
                 )
                 await self.session.execute(stmt)
+            log.info("order_created", order_id=order_loaded.id, customer_id=payload.customer_id, total=order_loaded.total_amount)
             return ApiEnvelope.ok(out)
     
         try:
