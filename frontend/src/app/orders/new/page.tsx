@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { api } from "@/lib/api";
+import { api, newIdempotencyKey } from "@/lib/api";
 import { Typeahead } from "@/components/Typeahead";
 import { useToast } from "@/components/ToastProvider";
 
@@ -10,6 +10,8 @@ export default function NewOrderPage() {
   const [items, setItems] = React.useState<
     { id: number; name: string; price: number; qty: number }[]
   >([]);
+  const [idemKey, setIdemKey] = React.useState(newIdempotencyKey());
+  const [submitting, setSubmitting] = React.useState(false);
 
   const addItem = (p: any) => {
     setItems((prev) => {
@@ -27,13 +29,15 @@ export default function NewOrderPage() {
 
   const submit = async () => {
     try {
+      setSubmitting(true);
       if (!customerId || items.length === 0)
         return alert("Selecione cliente e itens");
       const payload = {
         customer_id: customerId,
         items: items.map((i) => ({ product_id: i.id, quantity: i.qty })),
       };
-      const res = await api.orders.create(payload);
+      const res = await api.orders.create(payload, idemKey);
+      setIdemKey(newIdempotencyKey());
       alert(
         `Pedido criado #${res.id} total ${(
           res.total_amount / 100
@@ -41,6 +45,8 @@ export default function NewOrderPage() {
       );
     } catch (error: any) {
       show(error?.message || "Falha inesperada");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -134,7 +140,10 @@ export default function NewOrderPage() {
             </div>
           ))}
         </div>
-        <div style={{ textAlign: "right", fontWeight: 600, marginTop: 8 }}>
+        <div
+          data-testid="order-total"
+          style={{ textAlign: "right", fontWeight: 600, marginTop: 8 }}
+        >
           Total{" "}
           {(total / 100).toLocaleString("pt-BR", {
             style: "currency",
