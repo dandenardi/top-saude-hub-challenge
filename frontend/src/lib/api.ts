@@ -38,8 +38,14 @@ export type OrderOut = {
 };
 
 const isServer = typeof window === "undefined";
-
 const BASE = isServer ? process.env.API_INTERNAL_URL || "http://api:8000" : "";
+
+export function newIdempotencyKey(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    Math.random().toString(36).slice(2) + Date.now()
+  );
+}
 
 function emitApiError(msg: string) {
   if (typeof window !== "undefined") {
