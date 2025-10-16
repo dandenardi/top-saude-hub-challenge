@@ -20,13 +20,13 @@ async def create_product(body: ProductIn, session: AsyncSession = Depends(get_se
     out = await ProductRepo.create(session, body)
     return ApiEnvelope.ok(out)
 
-@router.get("/products", response_model=ApiEnvelope[list[ProductOut]])
+@router.get("/products", response_model=ApiEnvelope[list[ProductOut]], status_code=status.HTTP_201_CREATED,)
 async def list_products(q: str | None = None, page: int = 1, page_size: int = 20, sort: str = "created_at:desc", session: AsyncSession = Depends(get_session)):
     data = await ProductRepo.list(session, q=q, page=page, page_size=page_size, sort=sort)
     return ApiEnvelope.ok(data)
 
 # --- Customers CRUD ---
-@router.post("/customers", response_model=ApiEnvelope[CustomerOut])
+@router.post("/customers", response_model=ApiEnvelope[CustomerOut], status_code=status.HTTP_201_CREATED)
 async def create_customer(body: CustomerIn, session: AsyncSession = Depends(get_session)):
     out = await CustomerRepo.create(session, body)
     return ApiEnvelope.ok(out)
@@ -39,8 +39,17 @@ async def list_customers(
     sort: str = "created_at:desc",
     session: AsyncSession = Depends(get_session),
 ):
+    allowed = {
+        "id": CustomerORM.id,
+        "name": CustomerORM.name,
+        "email": CustomerORM.email,
+        "document": CustomerORM.document,
+        "created_at": CustomerORM.created_at,
+    }
     sort_col, sort_dir = (sort.split(":", 1) + ["asc"])[:2]
-    order_expr = text(f"{sort_col} {sort_dir.upper()}")
+    col = allowed.get(sort_col, CustomerORM.created_at)
+    is_desc = sort_dir.lower() == "desc"
+    order_expr = col.desc() if is_desc else col.asc()
     stmt = select(CustomerORM).order_by(order_expr)
     if q:
         stmt = stmt.where(CustomerORM.name.ilike(f"%{q}%"))
