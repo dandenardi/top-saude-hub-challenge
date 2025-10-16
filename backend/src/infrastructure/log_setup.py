@@ -1,4 +1,6 @@
-import logging, sys, structlog
+import logging 
+import sys 
+import structlog
 
 def setup_logging(level: str = "INFO"):
     structlog.configure(

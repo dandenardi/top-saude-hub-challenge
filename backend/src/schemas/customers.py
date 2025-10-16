@@ -1,9 +1,23 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, EmailStr, constr, ConfigDict
+from datetime import datetime
+from typing import Optional
+
+DocStr = constr(strip_whitespace=True, min_length=5, max_length=32)
 
 class CustomerIn(BaseModel):
-    name: str = Field(min_length=2, max_length=255)
+    name: constr(strip_whitespace=True, min_length=1, max_length=200)
+    email: EmailStr
+    document: DocStr
+
+class CustomerUpdate(BaseModel):
+    name: Optional[constr(strip_whitespace=True, min_length=1, max_length=200)] = None
+    email: Optional[EmailStr] = None
+    document: Optional[DocStr] = None
+
+class CustomerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
     email: EmailStr
     document: str
-
-class CustomerOut(CustomerIn):
-    id: int
+    created_at: datetime

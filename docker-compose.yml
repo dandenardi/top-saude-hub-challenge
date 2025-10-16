@@ -4,31 +4,57 @@ services:
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  initdb:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/app
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        python -m src.infrastructure.seed
+      "
+
   api:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      initdb:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/app
-      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/app_test
-      LOG_LEVEL: INFO
-    depends_on:
-      - db
     ports:
       - "8000:8000"
+
   web:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_started
     environment:
       API_INTERNAL_URL: http://api:8000
-    depends_on:
-      - api
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
       - "3000:3000"
+
 volumes:
   pgdata:
