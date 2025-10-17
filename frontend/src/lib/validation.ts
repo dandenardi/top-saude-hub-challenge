@@ -17,3 +17,18 @@ export const customerSchema = z.object({
   email: z.string().email("E-mail inválido"),
   document: z.string().min(6, "Documento inválido"),
 });
+
+export const OrderItemSchema = z.object({
+  product_id: z.number().int().positive(),
+  quantity: z.number().int().min(1, "Quantidade mínima é 1"),
+});
+
+export const OrderCreateSchema = z.object({
+  customer_id: z
+    .number({ invalid_type_error: "Informe um ID numérico" })
+    .int()
+    .positive("Cliente obrigatório"),
+  items: z.array(OrderItemSchema).min(1, "Adicione pelo menos um item"),
+});
+
+export type OrderCreateInput = z.infer<typeof OrderCreateSchema>;
